@@ -14,51 +14,28 @@
    [io.netty.channel.socket SocketChannel]
    [io.netty.channel.socket.nio NioSocketChannel NioServerSocketChannel]
    [java.nio.charset Charset]
-   [io.netty.buffer Unpooled]))
+   [io.netty.buffer Unpooled])
+  (:require [cljp.messages :as messages]))
 
 
-(defn startup-message []
-  (let [buf (Unpooled/buffer)]
-    (.writeInt buf (int 0))
-    (.writeShort buf (short 3))
-    (.writeShort buf (short 0))
-
-    (.writeBytes buf (.getBytes "database"))
-    (.writeByte buf (byte 0))
-    (.writeBytes buf (.getBytes "postgres"))
-    (.writeByte buf (byte 0))
-
-    (.writeBytes buf (.getBytes "user"))
-    (.writeByte buf (byte 0))
-    (.writeBytes buf (.getBytes "postgres"))
-    (.writeByte buf (byte 0))
-
-    (.writeByte buf (byte 0))
-
-    (let [idx (.writerIndex buf)]
-      (.markWriterIndex buf)
-      (.writerIndex  buf 0)
-      (.writeInt  buf idx)
-      (.resetWriterIndex buf)
-      buf)))
-
-#_(spit "test/messages/startup" (.toString
-                 (startup-message)
-                 (Charset/forName "utf-8")))
 
 (defn parse-auth [msg]
-  (println "len"  (.readInt msg))
+  (println "Auth"  (.readInt msg))
   (let [salt (byte-array 4)]
-    (.readBytes msg 4)
-    (println "salt" salt)))
+    (.readBytes msg salt 0 (.readableBytes msg))
+    salt))
 
-(defn parse-message [msg]
+(defn parse-message [ctx msg]
   (let [tp (char (.readByte msg))
         len (.readInt msg)]
     
     (cond (= tp \R)
           (cond
-            (= 12 len) (parse-auth msg)
+            (= 12 len) (let [salt (parse-auth msg)]
+                         (println "Salt" (String. salt))
+                         (.write ctx (messages/md5-login {:password "pass" :user "postgres"} salt))
+                         (.flush ctx))
+
             :else (println "MSG:::"
                            "[type:" tp "] "
                            "[length:" len "]"
@@ -76,14 +53,13 @@
     (channelRead
       [^ChannelHandlerContext ctx ^Object msg]
       (try
-        (#'parse-message msg)
-        
+        (#'parse-message ctx msg)
         (finally
           (ReferenceCountUtil/release msg))))
 
     (channelActive [^ChannelHandlerContext ctx]
       (println "Active")
-      (.write ctx (startup-message))
+      (.write ctx (messages/startup-message))
       (.flush ctx))
 
     (channelInactive [^ChannelHandlerContext ctx]
