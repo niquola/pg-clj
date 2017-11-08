@@ -161,7 +161,6 @@
       (print (char s))
       (print s))))
 
-
 (defn message [out tp params]
   (let [l (+ 4 (length params))]
     (when tp (write-to tp out))
@@ -227,17 +226,21 @@
                          :buffer ba})
       :else {:type "unknown"})))
 
-(aget respo 0)
-(parse-message respo)
-(-> respo  printbytes)
+;; (aget respo 0)
+;; (parse-message respo)
+;; (-> respo  printbytes)
 
 ;; -----------------
 
-(do (start)
-    (startup out))
+;; (do (start)
+;;     (startup out))
 
- (do-auth)
+;;  (do-auth)
 
+;; (spit "auth" (String. resp))
+;; (spit "respo" (String. respo))
+;; (spit "data" (String. respo2))
+; (spit "data" (String. respo2))
 
 (def respo
   (read-response in))
@@ -246,6 +249,7 @@
 
 (query out "select * from information_schema.tables")
 (query out "select 7")
+(query out "select '{\"a\": 1}'::jsonb")
 
 (def respo2
   (read-response in))
