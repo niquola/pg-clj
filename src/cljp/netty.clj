@@ -101,7 +101,27 @@
   nil)
 
 (defn  parse-parameter-status [m ctx out opts]
-  (parse-default m ctx out opts))
+  ;; ParameterStatus (B)
+  ;; Byte1('S')
+  ;; Identifies the message as a run-time parameter status report.
+
+  ;; Int32
+  ;; Length of message contents in bytes, including self.
+
+  ;; String
+  ;; The name of the run-time parameter being reported.
+
+  ;; String
+  ;; The current value of the parameter.
+  (let [params (loop [param {}]
+                 (if (<= (.readableBytes m) 0)
+                   param
+                   (let [k (read-cstring m)
+                         v (read-cstring m)]
+                     (recur (assoc param k v)))))]
+
+    (println params)
+    {:params params}))
 
 (defn parse-query [m ctx out opts]
   (let [query (read-cstring m)]
@@ -134,49 +154,47 @@
    (byte \C) parse-close
    })
 
-(defn client [opts]
-  (let [state (atom opts)]
-    (proxy [ByteToMessageDecoder] []
-      (decode [^ChannelHandlerContext ctx
-               ^Object msg
-               ^Object out]
-        (.markReaderIndex msg)
-        (let [tp (.readByte msg)
-              len (.readInt msg)
-              data-len (- len 4)]
-          (cond
-            (or (< data-len 0) (< (.readableBytes msg) data-len)) 
-            (.resetReaderIndex msg)
+(defn client [state]
+  (proxy [ByteToMessageDecoder] []
+    (decode [^ChannelHandlerContext ctx
+             ^Object msg
+             ^Object out]
+      (.markReaderIndex msg)
+      (let [tp (.readByte msg)
+            len (.readInt msg)
+            data-len (- len 4)]
+        (cond
+          (or (< data-len 0) (< (.readableBytes msg) data-len)) 
+          (.resetReaderIndex msg)
 
-            (>= (.readableBytes msg) data-len)
-            (let [m   (.readSlice msg data-len)
-                  p   (or (get parsers tp) parse-default)
-                  res (if (and (= tp 0x52) (= 12 len))
-                        (parse-auth m ctx out @state)
-                        (p m ctx out @state))]
-              (when (map? res)
-                (println "state changed" res)
-                (swap! state merge res))
-                (log/info "MSG TYPE: " (char tp) " len:" data-len " bytes left: " (.readableBytes msg))))))
+          (>= (.readableBytes msg) data-len)
+          (let [m   (.readSlice msg data-len)
+                p   (or (get parsers tp) parse-default)
+                res (if (and (= tp 0x52) (= 12 len))
+                      (parse-auth m ctx out @state)
+                      (p m ctx out @state))]
+            (when (map? res)
+              (println "State" (:params (swap! state #(merge-with merge % res)))))
+            (log/info "MSG TYPE: " (char tp) " len:" data-len " bytes left: " (.readableBytes msg))))))
 
-      (channelActive [^ChannelHandlerContext ctx]
-        (log/info "Active")
-        (.write ctx (messages/startup-message))
-        (.flush ctx))
+    (channelActive [^ChannelHandlerContext ctx]
+      (log/info "Active")
+      (.write ctx (messages/startup-message))
+      (.flush ctx))
 
-      (channelInactive [^ChannelHandlerContext ctx]
-        (log/info "InActive"))
+    (channelInactive [^ChannelHandlerContext ctx]
+      (log/info "InActive"))
 
-      (exceptionCaught
-        [^ChannelHandlerContext ctx ^Throwable cause]
-        (.printStackTrace cause)
-        (.close ctx)))))
+    (exceptionCaught
+      [^ChannelHandlerContext ctx ^Throwable cause]
+      (.printStackTrace cause)
+      (.close ctx))))
 
-(defn connect [group {host :host port :port :as opts}]
+(defn connect [group state]
   (let [b (Bootstrap.)
-        cl (client opts)
+        cl (client state)
+        opts @state
         ;; todo use future to wait till connection
-        conn (atom nil)
         chan (-> b
                  (.group group)
                  (.channel NioSocketChannel)
@@ -184,23 +202,23 @@
                  (.handler
                   (proxy [ChannelInitializer] []
                     (initChannel [^SocketChannel ch]
-                      (reset! conn ch)
+                      (swap! state assoc :channel ch)
                       (-> ch
                           (.pipeline)
                           (.addLast (into-array ChannelHandler [cl]))))))
-                 (.connect host port)
+                 (.connect (:host opts) (:port opts))
                  (.sync))]
-    {:channel      @conn
-     :opts         opts
-     :closeFeature (-> chan (.channel) (.closeFuture))}))
+    (swap! state assoc :closeFeature (-> chan (.channel) (.closeFuture)))))
 
-(defn query [{conn :channel} sql]
-  (.write conn (messages/query sql))
-  (.flush conn))
+(defn query [conn sql]
+  (let [chan (:channel @conn)] 
+    (println "!!!" chan)
+    (.write chan (messages/query sql))
+    (.flush chan)))
 
 (comment
 
-  (def opts {:host "localhost" :port 5555 :user "postgres" :password "pass"})
+  (def cl-1 (atom {:host "localhost" :port 5555 :user "postgres" :password "pass"}))
 
 
   cl-1
@@ -212,15 +230,17 @@
   (query cl-1 "select 12.00::numeric")
 
   (query cl-1 "select '2017-01-02'::timestamptz")
-  (query cl-1
-         "select x.* from information_schema.tables x limit 10"
-         {:on-row #(println "ROW:" %)})
+  (query cl-1 "select x.* from information_schema.tables x limit 10")
+
   (query cl-1 "select NULL as test")
 
   (do
     (.shutdownGracefully group)
     (def group (NioEventLoopGroup.))
-    (def cl-1 (connect group opts)))
+    (connect group cl-1))
+
+  cl-1
+
   )
 
 
