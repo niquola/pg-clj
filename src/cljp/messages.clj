@@ -64,6 +64,16 @@
     (println (.toString buf (Charset/forName "utf-8")))
     buf))
 
+(defn query [sql]
+  (let [buf (Unpooled/buffer)]
+    (.writeByte buf (byte \Q))
+    (.writeInt buf (int 0))
+    (.writeBytes buf (.getBytes sql))
+    (.writeByte buf (byte 0))
+    (header-length buf)
+    (println (.toString buf (Charset/forName "utf-8")))
+    buf))
+
 
 (comment
   (password (.getBytes "user") (.getBytes "pass") (.getBytes "salt"))
