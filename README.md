@@ -1,5 +1,7 @@
 # cljp
 
+[![Build Status](https://travis-ci.org/niquola/pg-clj.svg?branch=master)](https://travis-ci.org/niquola/pg-clj)
+
 Clojure-native non-jdbc driver for postgresql
 
 ## Dev
