@@ -4,6 +4,9 @@
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :dependencies [[org.clojure/clojure "1.9.0-beta4"]
-                 [io.netty/netty-all "4.1.16.Final"]
-                 [clj-tcp "1.0.1"]]
-  :plugins [[cider/cider-nrepl "0.15.1"]])
+                 [cheshire "5.6.3"]
+                 [org.clojure/tools.logging "0.3.1"]
+                 [io.netty/netty-all "4.1.16.Final"]]
+  :plugins [[cider/cider-nrepl "0.15.1"]]
+
+  :profiles {:dev {:dependencies [[matcho "0.1.0-RC6"]]}})

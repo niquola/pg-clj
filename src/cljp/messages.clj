@@ -161,7 +161,10 @@
   ;; in a failed transaction block (queries will be rejected until block is
   ;; ended).
 
-  {:status (get statuses (char (.readByte m)))})
+  (let [status (get statuses (char (.readByte m)))
+        connected (:connected opts )]
+    (when-not (realized? connected) (deliver connected {:status status}))
+    {:status status}))
 
 (defn  parse-parameter-status [m ctx out opts]
   ;; ParameterStatus (B)

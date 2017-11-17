@@ -70,8 +70,8 @@
 (defn connect [group state]
   (let [b (Bootstrap.)
         cl (client state)
+        connected (promise)
         opts @state
-        ;; todo use future to wait till connection
         chan (-> b
                  (.group group)
                  (.channel NioSocketChannel)
@@ -79,13 +79,17 @@
                  (.handler
                   (proxy [ChannelInitializer] []
                     (initChannel [^SocketChannel ch]
-                      (swap! state assoc :channel ch)
+                      (swap! state assoc
+                             :channel ch
+                             :connected connected)
                       (-> ch
                           (.pipeline)
                           (.addLast (into-array ChannelHandler [cl]))))))
                  (.connect (:host opts) (:port opts))
                  (.sync))]
-    (swap! state assoc :closeFeature (-> chan (.channel) (.closeFuture)))))
+    (swap! state assoc
+           :closeFeature (-> chan (.channel) (.closeFuture)))
+    connected))
 
 
 
@@ -103,6 +107,13 @@
     (.write chan (messages/query sql))
     (.flush chan)
     result))
+
+
+(defn pool []
+  (NioEventLoopGroup.))
+
+(defn shutdown [pool]
+  (.shutdownGracefully pool))
 
 (comment
   (def group (NioEventLoopGroup.))
@@ -132,8 +143,6 @@
 
   @(query cl-1 "select '2017-01-02'::timestamptz")
 
-  (time
-   (def r @(query cl-1 "select x.* from information_schema.tables x")))
 
   (count (:rows r))
 
