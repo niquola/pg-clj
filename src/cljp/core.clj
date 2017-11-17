@@ -32,7 +32,7 @@
 (defn client [state]
   (proxy [ByteToMessageDecoder] []
     (decode [^ChannelHandlerContext ctx
-             ^Object msg
+             ^ByteBuf msg
              ^Object out]
       (.markReaderIndex msg)
       (when (> (.readableBytes msg) 5)
@@ -40,19 +40,25 @@
               len (.readInt msg)
               data-len (- len 4)]
           (cond
-            (or (< data-len 0)
-                (< (.readableBytes msg) data-len))
-            (.resetReaderIndex msg)
-
             (>= (.readableBytes msg) data-len)
             (let [m   (.readSlice msg data-len)
-                  p   (or (get messages/parsers tp) messages/parse-default)
-                  res (if (and (= tp 0x52) (= 12 len))
+                  res (cond
+                        (= tp 68)
+                        (messages/parse-data-row m ctx out @state)
+
+                        (and (= tp 0x52) (= 12 len))
                         (messages/parse-auth m ctx out @state)
-                        (p m ctx out @state))]
+
+                        :else
+                        (let [p (or (get messages/parsers tp) messages/parse-default)]
+                          (p m ctx out @state)))]
               #_(println "MSG:" (char tp) " len:" len)
               (when (map? res)
-                (:params (swap! state #(deep-merge % res)))))))))
+                (:params (swap! state #(deep-merge % res)))))
+
+            (or (< data-len 0)
+                (< (.readableBytes msg) data-len))
+            (.resetReaderIndex msg)))))
 
     (channelActive [^ChannelHandlerContext ctx]
       (log/info "Connected")

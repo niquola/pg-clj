@@ -2,6 +2,7 @@
   (:require [clojure.tools.logging :as log])
   (:import
    [io.netty.buffer ByteBuf]
+   [io.netty.channel ChannelHandler ChannelHandlerContext ChannelInboundHandlerAdapter]
    [java.nio.charset Charset]
    [java.security MessageDigest]
    [javax.xml.bind DatatypeConverter]
@@ -85,7 +86,7 @@
 
 (def MAX-SIZE (* 1000 1000 100))
 
-(defn buf-to-str [b]
+(defn buf-to-str [^ByteBuf b]
   (.toString b utf))
 
 (defn read-cstring [b]
@@ -113,25 +114,25 @@
         acc))}})
 
 (defn parse-data-row
-  [b ctx out
+  [^ByteBuf b
+   ^ChannelHandlerContext ctx
+   ^Object out
    {{col-defs :columns
-     k? :keywordize?
      rows :rows} :query
     :as opts}]
-  (let [cols-num (.readShort b)
-        row (->> (loop [x cols-num
-                        res {}]
-                   (if (> x 0)
-                     (let [len     (.readInt b)
-                           col     (when (> len 0) (.readSlice b len))
-                           col-idx (- cols-num x)
-                           col-def (nth col-defs col-idx nil)
-                           k (if k? (keyword (:col-name col-def)) (:col-name col-def))
-                           v (when col (buf-to-str col))]
-                       (recur (dec x) (assoc res k v)))
-                     res))
-                 (swap! rows conj!))]
-    (.add out row))
+  (let [cols-num (.readShort ^ByteBuf b)]
+    (loop [x (int cols-num)
+           res (transient {})]
+      (if (> x 0)
+        (let [len     ^int (.readInt ^ByteBuf b)
+              col     (when (> len 0) (.readSlice ^ByteBuf b len))
+              col-def (nth col-defs (- cols-num x) nil)
+              k (clojure.lang.Keyword/intern ^String (:col-name col-def))]
+          (recur (dec x)
+                 (if col
+                   (assoc! res k (.toString ^ByteBuf col  ^Charset utf))
+                   res)))
+        (swap! rows conj! (persistent! res)))))
   nil)
 
 (defn parse-default [b ctx out opts]

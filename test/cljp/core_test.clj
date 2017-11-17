@@ -1,8 +1,10 @@
 (ns cljp.core-test
   (:require [clojure.test :refer :all]
             [matcho.core :as matcho]
+            [clojure.java.jdbc :as jdbc]
             [cljp.core :as sut]))
 
+(set! *warn-on-reflection* true)
 (deftest simple-test
 
   (def pool (sut/pool))
@@ -36,7 +38,27 @@
    {:rows [{:ts "2017-01-02 00:00:00+00"}]
     :status :ok})
 
-  (time @(sut/query conn "select x.* from information_schema.tables x"))
+  (time
+   (def cols @(sut/query conn "select x.* from information_schema.columns x")))
+
+  (println (count (:rows cols)))
+  (println (first (:rows cols)))
+
+  (println "jdbc")
+  (let [db-host "localhost"
+        db-port 5555
+        db-name "postgres"]
+
+    (def db {:classname "org.postgresql.Driver" ; must be in classpath
+             :subprotocol "postgresql"
+             :subname (str "//" db-host ":" db-port "/" db-name)
+             :user "postgres"
+             :password "pass"}))
+
+  (jdbc/query db ["select 1"])
+  (time
+   (def cols (jdbc/query db "select x.* from information_schema.columns x")))
+
 
   (Thread/sleep 100)
   (sut/shutdown pool)
@@ -62,14 +84,25 @@
 
   @(query cl-1 "select '2017-01-02'::timestamptz")
 
+  (println "netty")
   (time
    (def r @(query cl-1 "select x.* from information_schema.tables x")))
 
   (count (:rows r))
 
+
+
   (time (def r @(query cl-1 "select x from generate_series(1000) x")))
 
   (count r)
+
+
+  (time
+   (def r (jdbc/query db "select x.* from information_schema.tables x")))
+
+  (time (def r (jdbc/query cl-1 "select x from generate_series(1000) x")))
+  (time
+   (def r @(jdbc/query db "select x.* from information_schema.tables x")))
 
   @(query cl-1 "select NULL as test")
 

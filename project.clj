@@ -8,5 +8,7 @@
                  [org.clojure/tools.logging "0.3.1"]
                  [io.netty/netty-all "4.1.16.Final"]]
   :plugins [[cider/cider-nrepl "0.15.1"]]
-
-  :profiles {:dev {:dependencies [[matcho "0.1.0-RC6"]]}})
+  :aot :all
+  :profiles {:dev {:dependencies [[matcho "0.1.0-RC6"]
+                                  [org.clojure/java.jdbc "0.6.1"]
+                                  [org.postgresql/postgresql "9.4.1211.jre7"]]}})
