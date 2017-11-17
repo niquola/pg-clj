@@ -1,294 +1,150 @@
 (ns cljp.core
+  (:require [clojure.tools.logging :as log])
   (:import
-   [java.util.concurrent Executors]
-   [java.net Socket]
-   [java.io BufferedOutputStream
-    ByteArrayOutputStream
-    ObjectOutputStream
-    BufferedInputStream
-    BufferedReader InputStreamReader]
-   [java.nio ByteBuffer]
-
-   [javax.xml.bind DatatypeConverter]
-   [java.security MessageDigest]))
-
-
-(defn md5 [x]
-  (let [d (MessageDigest/getInstance "MD5")]
-    (.update d x)
-    (.getBytes (.toLowerCase (DatatypeConverter/printHexBinary (.digest d))))))
-
-(defn concat-ba [a b]
-  (let [buf (byte-array (+ (count a) (count b)))]
-    (System/arraycopy a 0 buf 0 (count a))
-    (System/arraycopy b 0 buf (count a) (count b))
-    buf))
-
-(defn password [user password salt]
-  (md5 (concat-ba (md5 (concat-ba password user))
-                  salt)))
-
-(String. (password (.getBytes "postgres") (.getBytes "Hoha") (byte-array [1 3 4 5])))
-
-
-
-(defn start []
-  (declare out)
-  (declare soc)
-  (declare in)
-
-  (try
-    (.close out)
-    (.close in)
-    (.close soc)
-    (catch Exception e
-      (println e)))
-
-  (def soc (Socket. "localhost", 5555))
-
-  (def out (BufferedOutputStream. (.getOutputStream soc)))
-
-  (def in (.getInputStream soc))
-
-  (.isClosed soc))
-
-(defn add-int [bas x]
-  (.write bas
-          (->
-           (ByteBuffer/allocate 4)
-           (.putInt (int x))
-           (.array))))
-
-(def types
-  {:startup [nil (short 3) (short 0)]
-   :password ['p']})
-
-
-(defprotocol Pg
-  (length [x])
-  (write-to [x out]))
-
-(extend-protocol Pg
-  Short
-  (length [x] 2)
-
-  (write-to [x out]
-    (.write out
-            (->
-             (ByteBuffer/allocate 2)
-             (.putShort x)
-             (.array)))
-    out)
-
-  String
-  (length [x]
-    (inc (count (.getBytes x))))
-
-  (write-to [x out]
-    (.write out (.getBytes x))
-    (.write out 0)
-    out)
-
-  clojure.lang.Keyword
-  (length [x]
-    (length (name x)))
-
-  (write-to [x out]
-    (write-to (name x) out)
-    out)
-
-  clojure.lang.PersistentArrayMap
-  (length [x]
-    (reduce (fn [acc [k v]]
-              (+ acc (length k) (length v)))
-            1 x))
-
-  (write-to [x out]
-    (doseq [[k v] x]
-      (write-to k out)
-      (write-to v out))
-    (.write out 0)
-    out)
-
-  java.lang.Character
-  (length [x] 1)
-  (write-to [x out]
-    (.write out (byte-array [(byte x)]))
-    out)
-
-
-  clojure.lang.MapEntry
-  (length [x]
-    (reduce (fn [acc [k v]]
-              (+ acc (length k) (length v) 1))
-            0 x))
-
-  (write-to [x out]
-    (doseq [[k v] x]
-      (write-to k out)
-      (write-to v out))
-    (.write out (byte 0))
-    out)
-
-  clojure.lang.PersistentVector
-  (length [^clojure.lang.PersistentVector x]
-    (->> x
-         (reduce (fn [acc x] (+ acc (length x))) 0)))
-
-  (write-to [x out]
-    (doseq [v x]
-      (write-to v out))
-    out))
-
-(length "asss")
-(length (short 1))
-(length :key)
-(length {:a "ups"})
-
-(write-to "Hello" (ByteArrayOutputStream.))
-(write-to :key (ByteArrayOutputStream.))
-(write-to (short 1) (ByteArrayOutputStream.))
-(write-to {:a "hello" :b "c"} (ByteArrayOutputStream.))
-
-(length [(short 3) (short 0) {:database "postgres" :user "postgres"}])
-
-(write-to [(short 3) (short 0) {:database "postgres" :user "postgres"}]
-       (ByteArrayOutputStream.))
-
-(defn printbytes [x]
-  (doseq [s x]
-    (if (and (< 31 s) (< s 255))
-      (print (char s))
-      (print s))))
-
-(defn message [out tp params]
-  (let [l (+ 4 (length params))]
-    (when tp (write-to tp out))
-    (println "msg l" l)
-    (add-int out l)
-    (write-to params out)
-    (.flush out)
-    out))
-
-(defn startup [out]
-  (message out nil [(short 3)
-                (short 0)
-                {:user "postgres"
-                 :database "postgres"}])
-  out)
-
-(defn auth-md5 [out user pass salt]
-  (let [msg (str "md5" (String. (password (.getBytes user) (.getBytes pass) salt)))]
-    (-> (message (ByteArrayOutputStream.) \p msg) (.toByteArray) (printbytes))
-    (message out \p msg)
-    out))
-
-(defn query [out sql]
-  (-> (message (ByteArrayOutputStream.) \Q sql) (.toByteArray) (printbytes))
-  (message out \Q sql)
-  out)
-
-(defn read-response [in]
-  (when (< 0 (.available in))
-    (let [buf (ByteArrayOutputStream.)]
-      (while (< 0 (.available in))
-        (.write buf (.read in)))
-      (let [res (.toByteArray buf)]
-        (.close buf)
-        res))))
-
-(defn read-int [ba pos]
-  (loop [i 0 v (int 0)]
-    (if (> i 3) v
-        (recur
-         (inc i)
-         (let [shift (* (- 4 1 i) 8)]
-           (+ v (bit-shift-left (aget ba (+ i pos)) shift)))))))
-
-(defn parse-auth-md [ba]
-  (let [len (read-int ba 1)]
-    {:type :auth-md
-     :length len
-     :salt (byte-array [(aget ba 9)
-                        (aget ba 10)
-                        (aget ba 11)
-                        (aget ba 12)])}))
-
-(defn parse-message [ba]
-  (let [tp (aget ba 0)
-        len (read-int ba 1)]
-    (println (aget ba 0))
-    (cond
-      (= tp 82) (cond
-                  (= 12 len) (parse-auth-md ba)
-                  :else {:type :resp
-                         :length len
-                         :buffer ba})
-      :else {:type "unknown"})))
-
-;; (aget respo 0)
-;; (parse-message respo)
-;; (-> respo  printbytes)
-
-;; -----------------
-
-;; (do (start)
-;;     (startup out))
-
-;;  (do-auth)
-
-;; (spit "auth" (String. resp))
-;; (spit "respo" (String. respo))
-;; (spit "data" (String. respo2))
-; (spit "data" (String. respo2))
-
-(def respo
-  (read-response in))
-
-(-> respo printbytes)
-
-(query out "select * from information_schema.tables")
-(query out "select 7")
-(query out "select '{\"a\": 1}'::jsonb")
-
-(def respo2
-  (read-response in))
-
-(-> respo2 printbytes)
-
-(write-to [\p "hello"]
-          (ByteArrayOutputStream.) )
-
-(defn do-auth []
-
-  (def resp (read-response in))
-  (-> 
-   resp
-   printbytes)
-
-  (def auth-resp
-    (when resp
-      (parse-message resp)))
-
-  (mapv byte (:salt auth-resp))
-
-  (auth-md5 out "postgres" "pass" (:salt auth-resp))
-
-
-  )
-
-
-
+   [io.netty.buffer ByteBuf]
+   [io.netty.util ReferenceCountUtil]
+   [io.netty.channel ChannelHandler ChannelHandlerContext ChannelInboundHandlerAdapter]
+   [io.netty.bootstrap ServerBootstrap Bootstrap]
+   [io.netty.channel ChannelFuture]
+   [io.netty.channel ChannelInitializer]
+   [io.netty.channel ChannelOption]
+   [io.netty.channel EventLoopGroup]
+   [io.netty.channel.nio NioEventLoopGroup]
+   [io.netty.channel.socket SocketChannel]
+   [io.netty.channel.socket.nio NioSocketChannel NioServerSocketChannel]
+   [java.nio.charset Charset]
+   [io.netty.handler.codec ByteToMessageDecoder]
+   [io.netty.buffer Unpooled])
+  (:require [cljp.messages :as messages]))
+
+(defn deep-merge [a b]
+  (loop [[[k v :as i] & ks] b
+         acc a]
+    (if (nil? i)
+      acc
+      (let [av (get a k)]
+        (if (= v av)
+          (recur ks acc)
+          (recur ks (if (and (map? v) (map? av))
+                      (assoc acc k (deep-merge av v))
+                      (assoc acc k v))))))))
+
+(defn client [state]
+  (proxy [ByteToMessageDecoder] []
+    (decode [^ChannelHandlerContext ctx
+             ^Object msg
+             ^Object out]
+      (.markReaderIndex msg)
+      (when (> (.readableBytes msg) 5)
+        (let [tp (.readByte msg)
+              len (.readInt msg)
+              data-len (- len 4)]
+          (cond
+            (or (< data-len 0)
+                (< (.readableBytes msg) data-len))
+            (.resetReaderIndex msg)
+
+            (>= (.readableBytes msg) data-len)
+            (let [m   (.readSlice msg data-len)
+                  p   (or (get messages/parsers tp) messages/parse-default)
+                  res (if (and (= tp 0x52) (= 12 len))
+                        (messages/parse-auth m ctx out @state)
+                        (p m ctx out @state))]
+              #_(println "MSG:" (char tp) " len:" len)
+              (when (map? res)
+                (:params (swap! state #(deep-merge % res)))))))))
+
+    (channelActive [^ChannelHandlerContext ctx]
+      (log/info "Connected")
+      (.write ctx (messages/startup-message))
+      (.flush ctx))
+
+    (channelInactive [^ChannelHandlerContext ctx]
+      (log/info "Disconnected"))
+
+    (exceptionCaught
+      [^ChannelHandlerContext ctx ^Throwable cause]
+      (.printStackTrace cause)
+      (.close ctx))))
+
+(defn connect [group state]
+  (let [b (Bootstrap.)
+        cl (client state)
+        opts @state
+        ;; todo use future to wait till connection
+        chan (-> b
+                 (.group group)
+                 (.channel NioSocketChannel)
+                 (.option ChannelOption/SO_KEEPALIVE true)
+                 (.handler
+                  (proxy [ChannelInitializer] []
+                    (initChannel [^SocketChannel ch]
+                      (swap! state assoc :channel ch)
+                      (-> ch
+                          (.pipeline)
+                          (.addLast (into-array ChannelHandler [cl]))))))
+                 (.connect (:host opts) (:port opts))
+                 (.sync))]
+    (swap! state assoc :closeFeature (-> chan (.channel) (.closeFuture)))))
+
+
+
+(defn query [conn sql & [opts]]
+  (let [chan (:channel @conn)
+        result (promise)]
+    (swap! conn update
+           :query
+           (fn [old]
+             (deep-merge
+              (deep-merge (or old {}) (or opts {}))
+              {:sql sql
+               :rows (atom (transient []))
+               :result result})))
+    (.write chan (messages/query sql))
+    (.flush chan)
+    result))
 
 (comment
-  (write-to
-   [\p (String. (password (.getBytes "postgres") (.getBytes "pass") (.getBytes "salt")))]
-   (ByteArrayOutputStream.) )
+  (def group (NioEventLoopGroup.))
+
+  (def cl-1 (atom {:host "localhost"
+                   :port 5555
+                   :user "postgres"
+                   :password "pass"
+                   :query {:keywordize? true}}))
+
+  (do
+    (.shutdownGracefully group)
+    (def group (NioEventLoopGroup.))
+    (def x (connect group cl-1)))
+
+  (def res (query cl-1 "select * from information_schema.columns, information_schema.tables limit 100"))
+
+  (count (:rows @res))
+
+  @(query cl-1 "select '{\"a\":1}'::jsonb as x, 2 as y")
+
+  @(query cl-1 "select 1 || 2")
+  @(query cl-1 "select ups")
+  @(query cl-1 "select 'ups', 'dups'")
+
+  @(query cl-1 "select 12.00::numeric")
+
+  @(query cl-1 "select '2017-01-02'::timestamptz")
+
+  (time
+   (def r @(query cl-1 "select x.* from information_schema.tables x")))
+
+  (count (:rows r))
+
+  (time (def r @(query cl-1 "select x from generate_series(1000) x")))
+
+  (count r)
+
+  @(query cl-1 "select NULL as test")
+
+
+  cl-1
 
   )
-
-
-
-
-(String. (md5 (.getBytes "hello")))
 
