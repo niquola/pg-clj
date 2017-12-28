@@ -2,7 +2,17 @@
 
 [![Build Status](https://travis-ci.org/niquola/pg-clj.svg?branch=master)](https://travis-ci.org/niquola/pg-clj)
 
-Clojure-native non-jdbc driver for postgresql
+Clojure-native async non-jdbc driver for postgresql - no middleware abstractions
+
+* async
+* support all datatypes
+* data dsl for queries (aka honeysql)
+* logical replication / notifications
+* netty
+* jsonb as first class
+
+# ( '/' )
+
 
 ## Dev
 
