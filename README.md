@@ -1,17 +1,18 @@
-# cljp
+# ( '/' ) pg-clj
+
 
 [![Build Status](https://travis-ci.org/niquola/pg-clj.svg?branch=master)](https://travis-ci.org/niquola/pg-clj)
 
 Clojure-native async non-jdbc driver for postgresql - no middleware abstractions
 
-* async
-* support all datatypes
+* async (netty)
+* support all datatypes (arrays, custom types)
+* connection pool
 * data dsl for queries (aka honeysql)
 * logical replication / notifications
-* netty
-* jsonb as first class
-
-# ( '/' )
+* jsonb as first class (jsquery/json-knife)
+* extensibility
+* rest api (aka postgrest?)
 
 
 ## Dev
